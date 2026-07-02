@@ -78,6 +78,23 @@ pipeline {
             }
         }
 
+        stage('SonarQube Analysis') {
+            when { expression { env.RUN_EXTERNAL_BUILD == 'true' } }
+            steps {
+                withSonarQubeEnv('SonarQubeDockerServer') {
+                    sh 'mvn clean verify sonar:sonar'
+                }
+                script {
+                    timeout(time: 3, unit: 'MINUTES') {
+                        def qg = waitForQualityGate()
+                        if (qg.status != 'OK') {
+                            error "Quality Gate failed: ${qg.status}"
+                        }
+                    }
+                }
+            }
+        }
+        
         stage('Build') {
             when {
                 expression { env.RUN_EXTERNAL_BUILD == 'true' }
