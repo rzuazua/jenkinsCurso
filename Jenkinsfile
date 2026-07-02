@@ -52,9 +52,7 @@ pipeline {
     }
     post {
         success {
-            sh '''
-                find target -maxdepth 1 -type f -name "*.jar" -exec cp {} . \;
-            '''
+            sh 'cp target/*.jar .'
             archiveArtifacts artifacts: '*.jar', fingerprint: true, allowEmptyArchive: false
         }
     }
