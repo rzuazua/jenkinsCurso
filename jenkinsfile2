@@ -1,0 +1,109 @@
+pipeline {
+    agent any
+    triggers { // Sondear repositorio a intervalos regulares
+        pollSCM('* * * * *')
+    }
+    tools {
+        maven "maven_lts"
+    }
+
+    stages {
+        stage ('Initialize') {
+            steps {
+                sh '''
+                    echo "PATH = ${PATH}"
+                    echo "JAVA_HOME = ${JAVA_HOME}"
+                    echo "JENKINS_VERSION = ${JENKINS_VERSION}"
+                ''' 
+                echo "BRANCH_NAME = ${env.BRANCH_NAME}"
+            }
+        }
+        stage("Compile") {
+            steps {
+                sh "mvn compile"
+            }
+        }
+        stage("Unit test") {
+            steps {
+                sh "mvn test"
+            }
+            post {
+                always {
+                    junit 'target/surefire-reports/*.xml'
+                    recordCoverage(tools: [[parser: 'JACOCO']])
+                    //jacoco sourceInclusionPattern: '**/*.java'
+                }
+            }
+        }
+        stage("SonarQube Analysis") {
+            steps {
+                withSonarQubeEnv('SonarQubeDockerServer') {
+                    sh 'mvn clean verify sonar:sonar'
+                }
+                timeout(time: 3, unit: 'MINUTES') { // time: 2 unit: 'MINUTES'
+                  // In case of SonarQube failure or direct timeout exceed, stop Pipeline
+                  waitForQualityGate abortPipeline: waitForQualityGate().status != 'OK'
+                }
+            }
+        }
+        stage('Build & Site') {
+            when {
+                branch 'production'
+            } 
+            failFast true
+            parallel {
+                stage('Build') {
+                    steps {
+                        sh 'mvn package -DskipTests'
+                    }
+                    post {
+                        success {
+                            archiveArtifacts artifacts: 'target/*.jar', fingerprint: true, followSymlinks: false
+                        }
+                    }
+                }
+                stage("Site") {
+                    steps {
+                        sh "mvn site"
+                    }
+                    post {
+                        success {
+                            publishHTML([
+                                allowMissing: false, 
+                                alwaysLinkToLastBuild: false, 
+                                icon: '', 
+                                keepAll: false, 
+                                reportDir: 'target/site/', 
+                                reportFiles: 'index.html', 
+                                reportName: 'Documentacion del sitio', 
+                                reportTitles: 'Documentacion del sitio', 
+                                useWrapperFileDirectly: true
+                                ])
+                        }
+                    }
+                }
+            }
+        }
+        stage('deploy') {
+            when {
+                branch 'production' 
+            }
+            steps {
+                mail to: 'amd@example.com',
+                 subject: "Pendiente de aprobación el despliegue de ${currentBuild.fullDisplayName}",
+                 body: "Para la aprobación entre en ${env.BUILD_URL+'stages'}"
+                timeout(time: 3, unit: 'MINUTES') {
+                    input cancel: 'Cancelar', message: 'Procedo al despliegue o aborto', ok: 'Aceptar'
+                }
+                sh 'mvn install -DskipTests'
+            }
+        }
+    }
+    post {
+        always {
+            mail to: 'team@example.com',
+                subject: "Resultado Paso a produccion: ${currentBuild.fullDisplayName}",
+                body: "${env.BUILD_URL} has result ${currentBuild.currentResult}"
+        }
+    }
+}
